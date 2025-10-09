@@ -6,6 +6,8 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.functions.co.KeyedBroadcastProcessFunction;
 import org.apache.flink.util.Collector;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -14,7 +16,8 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
         String,  // 主流 key 类型
         PartitionInfoRecordGets.PartitionInfo,  // 主流元素类型
         CompactProcessFunction.CompactionOut, // 广播流元素类型
-        PartitionInfoRecordGets.PartitionInfo> { // 输出类型
+        PartitionInfoRecordGets.PartitionInfo> {
+    private static final Logger log = LoggerFactory.getLogger(CompactionBroadcastProcessFunction.class); // 输出类型
 
     private final MapStateDescriptor<String, CompactProcessFunction.CompactionOut> broadcastStateDesc;
     private transient ValueState<PartitionInfoRecordGets.PartitionInfo> elementState;
@@ -111,31 +114,28 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
         if (compaction != null) {
             // enrich 主流数据
             long compactTimstamp = compaction.timestamp;
-            System.out.println("当前时间差为：" + (valueTimestamp - compactTimstamp));
+            log.info("当前时间差为：" + (valueTimestamp - compactTimstamp));
             long currTimestamp = System.currentTimeMillis();
             if (valueTimestamp < compactTimstamp && currTimestamp - valueTimestamp > expiredTime){
                 //TODO
-                System.out.println("执行删除操作");
+                log.info("执行version为"+ value.version +"的删除操作");
                 CleanUtils cleanUtils = new CleanUtils();
                 boolean latestCompactVersionIsOld = state.get(key).isOldCompaction();
                 boolean belongOldCompaction = value.version < state.get(key).switchVersion || latestCompactVersionIsOld;
-                cleanUtils.deleteFileAndDataCommitInfo(value.snapshot, value.table_id, value.partition_desc, pgConnection, belongOldCompaction);
-                cleanUtils.cleanPartitionInfo(value.table_id, value.partition_desc, value.version, pgConnection);
-                System.out.println("version: " + value.version + " 执行旧版清理： " + belongOldCompaction);
-                if (value.version < 4 && !belongOldCompaction) {
-                    System.out.println(state.get(key).switchVersion + "qqqqqqqqqqqqqqqqqq");
-                }
+                //cleanUtils.deleteFileAndDataCommitInfo(value.snapshot, value.table_id, value.partition_desc, pgConnection, belongOldCompaction);
+                //cleanUtils.cleanPartitionInfo(value.table_id, value.partition_desc, value.version, pgConnection);
+                log.info("version: " + value.version + " 执行旧版清理： " + belongOldCompaction);
+                //System.out.println("version: " + value.version + " 执行旧版清理： " + belongOldCompaction);
                 elementState.clear();
             } else {
-                System.out.println("2：触发定时器");
                 long currentProcessingTime = ctx.timerService().currentProcessingTime();
-                System.out.println("version: " + value.version + "再次注册定时器，等待执行");
+                //System.out.println("version: " + value.version + " 再次注册定时器，等待执行");
+                log.info("version: " + value.version + "注册定时器，等待执行");
                 ctx.timerService().registerProcessingTimeTimer(currentProcessingTime + ontimerInterval);
             }
         } else {
-            System.out.println("1：注册定时器");
+            log.info("version :" + value.version +"没有过期，再次注册定时器");
             long currentProcessingTime = ctx.timerService().currentProcessingTime();
-            System.out.println(currentProcessingTime +  ontimerInterval);
             //ctx.timerService().registerEventTimeTimer(currentProcessingTime +  ontimerInterval);
             ctx.timerService().registerProcessingTimeTimer(currentProcessingTime + ontimerInterval);
         }
@@ -155,29 +155,27 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
                 ctx.getBroadcastState(broadcastStateDesc);
         String key = tableId + "/" + partitionDesc;
         CompactProcessFunction.CompactionOut compactionOut = state.get(key);
-        System.out.println(compactionOut+"-----------------");
         PartitionInfoRecordGets.PartitionInfo value = elementState.value();
 
         if (compactionOut != null) {
-            System.out.println("当前新旧压缩切换版本为：" + state.get(key).switchVersion);
+            log.info("当前新旧压缩切换版本为：" + state.get(key).switchVersion);
             long currTimestamp = value.timestamp;
             long compactTimestamp = compactionOut.timestamp;
             if (currTimestamp < compactTimestamp && timestamp - currTimestamp > expiredTime){
                 //TODO
                 boolean latestCompactVersionIsOld = state.get(key).isOldCompaction();
                 boolean belongOldCompaction = value.version < state.get(key).switchVersion || latestCompactVersionIsOld;
-                System.out.println("version: " + value.version + " 执行旧版清理： " + belongOldCompaction);
-                cleanUtils.deleteFileAndDataCommitInfo(value.snapshot, value.table_id, value.partition_desc, pgConnection, belongOldCompaction);
-                cleanUtils.cleanPartitionInfo(value.table_id, value.partition_desc, value.version, pgConnection);
-                System.out.println("执行清理工作");
+                log.info("version: " + value.version + " 执行旧版清理： " + belongOldCompaction);
+                //System.out.println("version: " + value.version + " 执行旧版清理： " + belongOldCompaction);
+                //cleanUtils.deleteFileAndDataCommitInfo(value.snapshot, value.table_id, value.partition_desc, pgConnection, belongOldCompaction);
+                //cleanUtils.cleanPartitionInfo(value.table_id, value.partition_desc, value.version, pgConnection);
                 elementState.clear();
             } else {
-                System.out.println("2：触发定时器");
-                System.out.println("version: " + value.version + "再次注册定时器，等待执行");
+                log.info("version: " + value.version + "再次注册定时器，等待执行");
                 ctx.timerService().registerProcessingTimeTimer(timestamp + ontimerInterval);
             }
         } else {
-            System.out.println("3：触发定时器");
+            log.info("version: " + value.version + "再次注册定时器，等待执行");
             ctx.timerService().registerProcessingTimeTimer(timestamp + ontimerInterval);
         }
 

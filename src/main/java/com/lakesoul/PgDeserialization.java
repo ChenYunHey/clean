@@ -1,6 +1,5 @@
 package com.lakesoul;
 
-
 import com.alibaba.fastjson.JSONObject;
 import com.ververica.cdc.connectors.shaded.org.apache.kafka.connect.data.Field;
 import com.ververica.cdc.connectors.shaded.org.apache.kafka.connect.data.Schema;
@@ -20,80 +19,76 @@ public class PgDeserialization implements DebeziumDeserializationSchema<String> 
 
     @Override
     public void deserialize(SourceRecord sourceRecord, Collector<String> collector) throws Exception {
-        JSONObject result = new JSONObject();
         String topic = sourceRecord.topic();
         String[] fields = topic.split("\\.");
-        String database = fields[1];
+        if (fields.length < 3) return;
+
         String tableName = fields[2];
         Struct value = (Struct) sourceRecord.value();
+        if (value == null) return;
 
-        // get "before" data
-        Struct before = value.getStruct("before");
-        JSONObject beforeJson = new JSONObject();
-        if (before != null) {
-            Schema beforeSchema = before.schema();
-            List<Field> beforeFields = beforeSchema.fields();
-            for (Field beforeField : beforeFields) {
-                Object beforeValue = before.get(beforeField);
+        JSONObject result = new JSONObject();
+        JSONObject beforeJson = extractStructJson(value.getStruct("before"));
+        JSONObject afterJson = extractStructJson(value.getStruct("after"));
 
-                String name = beforeField.name();
-                if (name.equals("file_ops")){
-                    ArrayList afterValue1 = (ArrayList) before.get(beforeField);
-                    Object[] objects = afterValue1.toArray();
-                    ArrayList<byte[]> arrayList = new ArrayList();
-                    for (Object object : objects) {
-                        ByteBuffer o = (ByteBuffer) object;
-                        byte[] array = o.array();
-                        arrayList.add(array);
-                    }
-                    beforeJson.put(beforeField.name(), arrayList);
-                    continue;
-                }
-                beforeJson.put(beforeField.name(), beforeValue);
-            }
-        }
-        // get afterValue
-        Struct after = value.getStruct("after");
-        JSONObject afterJson = new JSONObject();
-
-        if (after != null) {
-            Schema afterSchema = after.schema();
-            List<Field> afterFields = afterSchema.fields();
-            for (Field field : afterFields) {
-                Object afterValue = after.get(field);
-                String name = field.name();
-                if (name.equals("file_ops")){
-                    ArrayList afterValue1 = (ArrayList) after.get(field);
-                    Object[] objects = afterValue1.toArray();
-                    //byte[] b = o.array();
-                    ArrayList<byte[]> arrayList = new ArrayList();
-                    for (Object object : objects) {
-                        ByteBuffer o = (ByteBuffer) object;
-                        byte[] array = o.array();
-                        arrayList.add(array);
-                    }
-                    afterJson.put(field.name(), arrayList);
-                    continue;
-                }
-                afterJson.put(field.name(), afterValue);
-            }
+        // 只处理指定表
+        if (!tableName.equals("partition_info") && !tableName.equals("discard_compressed_file_info")) {
+            return;
         }
 
+        // 添加操作类型
         Envelope.Operation operation = Envelope.operationFor(sourceRecord);
-        String type = operation.toString().toLowerCase();
-        result.put("commitOp",type);
-        result.put("tableName",tableName);
-        result.put("before",beforeJson);
-        result.put("after",afterJson);
+        result.put("commitOp", operation.toString().toLowerCase());
+        result.put("tableName", tableName);
+        result.put("before", beforeJson);
+        result.put("after", afterJson);
+
+        // 有效数据才输出
         if (!beforeJson.isEmpty() || !afterJson.isEmpty()) {
             collector.collect(result.toJSONString());
         }
     }
 
+    /**
+     * 将 Struct 转为 JSONObject。
+     * 特殊处理字段 file_ops（ArrayList<ByteBuffer> -> List<byte[]>）
+     */
+    private JSONObject extractStructJson(Struct struct) {
+        JSONObject json = new JSONObject();
+        if (struct == null) return json;
+
+        Schema schema = struct.schema();
+        for (Field field : schema.fields()) {
+            Object value = struct.get(field);
+            if (value == null) {
+                json.put(field.name(), null);
+                continue;
+            }
+
+            if ("file_ops".equals(field.name()) && value instanceof ArrayList) {
+                json.put(field.name(), convertByteBufferList((ArrayList<?>) value));
+            } else {
+                json.put(field.name(), value);
+            }
+        }
+        return json;
+    }
+
+    /**
+     * 将 ArrayList<ByteBuffer> 转为 ArrayList<byte[]>
+     */
+    private ArrayList<byte[]> convertByteBufferList(ArrayList<?> list) {
+        ArrayList<byte[]> result = new ArrayList<>();
+        for (Object obj : list) {
+            if (obj instanceof ByteBuffer) {
+                result.add(((ByteBuffer) obj).array());
+            }
+        }
+        return result;
+    }
 
     @Override
     public TypeInformation<String> getProducedType() {
         return BasicTypeInfo.STRING_TYPE_INFO;
     }
 }
-

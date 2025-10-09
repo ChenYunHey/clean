@@ -1,5 +1,7 @@
 package com.lakesoul;
 
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONObject;
 import com.lakesoul.utils.SourceOptions;
 import com.ververica.cdc.connectors.base.options.StartupOptions;
 import com.ververica.cdc.connectors.base.source.jdbc.JdbcIncrementalSource;
@@ -22,6 +24,7 @@ import org.slf4j.LoggerFactory;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Properties;
@@ -49,7 +52,8 @@ public class Clean {
         PgDeserialization deserialization = new PgDeserialization();
         Properties debeziumProperties = new Properties();
         debeziumProperties.setProperty("include.unknown.datatypes", "true");
-        String[] tableList = new String[]{"public.partition_info"};
+        String[] tableList = new String[]{"public.partition_info", "public.discard_compressed_file_info"};
+        //String[] tableList = new String[]{ "public.discard_compressed_file_info"};
 
         userName = parameter.get(SourceOptions.SOURCE_DB_USER.key());
         dbName = parameter.get(SourceOptions.SOURCE_DB_DB_NAME.key());
@@ -102,15 +106,44 @@ public class Clean {
                         WatermarkStrategy.noWatermarks(),
                         "PostgresParallelSource")
                 .setParallelism(sourceParallelism);
+        final OutputTag<String> partitionInfoTag = new OutputTag<String>("partition_info") {};
+        final OutputTag<String> discardFileInfoTag = new OutputTag<String>("discard_compressed_file_info") {};
+        SingleOutputStreamOperator<String> mainStream = postgresParallelSource.process(
+                new ProcessFunction<String, String>() {
+                    @Override
+                    public void processElement(String value, Context ctx, Collector<String> out) throws Exception {
+                        try {
+                            JSONObject json = JSON.parseObject(value);
+                            String tableName = json.getString("tableName");
 
-//        postgresParallelSource.print();
+                            if ("partition_info".equals(tableName)) {
+                                ctx.output(partitionInfoTag, value);
+                            } else if ("discard_compressed_file_info".equals(tableName)) {
+                                ctx.output(discardFileInfoTag, value);
+                            }
+                        } catch (Exception e) {
+                            // 如果解析失败，可以打印或发往错误流
+                            System.err.println("JSON parse error: " + e.getMessage());
+                        }
+                    }
+                }
+        );
+        SideOutputDataStream<String> partitionInfoStream = mainStream.getSideOutput(partitionInfoTag);
+        SideOutputDataStream<String> discardFileInfoStream = mainStream.getSideOutput(discardFileInfoTag);
+
+        discardFileInfoStream.map(new DiscardPathMapFunction()).filter(Objects::nonNull).process(new ProcessFunction<HashMap<String, Long>, String>() {
+            @Override
+            public void processElement(HashMap<String, Long> value, ProcessFunction<HashMap<String, Long>, String>.Context ctx, Collector<String> out) throws Exception {
+
+            }
+        });
+
         CleanUtils utils = new CleanUtils();
-
         final OutputTag<PartitionInfoRecordGets.PartitionInfo> compactionCommitTag =
                 new OutputTag<>("compactionCommit"){};
         Connection connection = DriverManager.getConnection(pgUrl, userName, passWord);
         List<String> tableIdList = utils.getTableIdByTableName(targetTables, connection);
-        SingleOutputStreamOperator<PartitionInfoRecordGets.PartitionInfo> mainStreaming = postgresParallelSource.map(new PartitionInfoRecordGets.metaMapper(tableIdList))
+        SingleOutputStreamOperator<PartitionInfoRecordGets.PartitionInfo> mainStreaming = partitionInfoStream.map(new PartitionInfoRecordGets.metaMapper(tableIdList))
                 .filter(Objects::nonNull).process(new ProcessFunction<PartitionInfoRecordGets.PartitionInfo, PartitionInfoRecordGets.PartitionInfo>() {
                     @Override
                     public void processElement(PartitionInfoRecordGets.PartitionInfo value,
@@ -145,9 +178,6 @@ public class Clean {
                 partitionInfoStringKeyedStream.connect(broadcastStream);
 
         connectedStream.process(new CompactionBroadcastProcessFunction(broadcastStateDesc, pgUrl, userName, passWord, expiredTime, ontimerInterval));
-
-
-        //filter.keyBy(value -> value.table_id + "/" + value.partition_desc).process(new ProcessClean(pgUrl, userName, passWord, expiredTime))
 
         env.execute();
 

@@ -108,6 +108,23 @@ public class CleanUtils {
             }
         }
     }
+    public void deleteFile(String filePath) throws SQLException {
+        Configuration hdfsConfig = new Configuration();
+        if (filePath.startsWith(HDFS_URI_PREFIX)) {
+            deleteHdfsFile(filePath, hdfsConfig);
+        } else if (filePath.startsWith("file:/")) {
+            try {
+                URI uri = new URI(filePath);
+                String actualPath = new File(uri.getPath()).getAbsolutePath();
+                deleteLocalFile(actualPath);
+            } catch (URISyntaxException e) {
+                e.printStackTrace();
+                logger.info("无法解析文件URI: " + filePath);
+            }
+        } else {
+            deleteLocalFile(filePath);
+        }
+    }
 
     private void deleteHdfsFile(String filePath, Configuration hdfsConfig) {
         try {
@@ -172,18 +189,21 @@ public class CleanUtils {
             ps.setArray(1, uuidArray);
 
             try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()){
+                boolean allCompact = true; // 假设全部都包含 "compact_"
+                while (rs.next()){
                     Object op = rs.getObject("op");
                     String path = op.toString();
                     logger.info("当前压缩的文件目录：" + path);
                     logger.info("oldCompaction: " + path.contains("compact_"));
-                    return path.contains("compact_");
+                    if (!path.contains("compact_")) {
+                        allCompact = false;
+                        break;
+                    }
                 }
+                return allCompact;
             }
         }
-        return true;
     }
-
 
     public void deleteFileAndDataCommitInfo(List<String> snapshot, String tableId, String partitionDesc, Connection connection, Boolean oldCompaction) {
         logger.info("清理旧版压缩数据");
