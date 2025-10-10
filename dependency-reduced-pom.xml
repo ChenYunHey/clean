@@ -8,19 +8,19 @@
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-table-common</artifactId>
-      <version>1.20.0</version>
+      <version>1.17.1</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-core</artifactId>
-      <version>1.20.0</version>
+      <version>1.17.1</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-streaming-java</artifactId>
-      <version>1.20.0</version>
+      <version>1.17.1</version>
       <scope>provided</scope>
       <exclusions>
         <exclusion>
@@ -32,32 +32,32 @@
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-clients</artifactId>
-      <version>1.20.0</version>
+      <version>1.17.1</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-runtime</artifactId>
-      <version>1.20.0</version>
+      <version>1.17.1</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-json</artifactId>
-      <version>1.20.0</version>
+      <version>1.17.1</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-streaming-java</artifactId>
-      <version>1.20.0</version>
+      <version>1.17.1</version>
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-table-api-scala_2.12</artifactId>
-      <version>1.20.0</version>
+      <version>1.17.1</version>
       <scope>provided</scope>
       <exclusions>
         <exclusion>
@@ -69,7 +69,7 @@
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-table-planner_2.12</artifactId>
-      <version>1.20.0</version>
+      <version>1.17.1</version>
       <scope>provided</scope>
       <exclusions>
         <exclusion>
@@ -85,31 +85,31 @@
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-runtime-web</artifactId>
-      <version>1.20.0</version>
+      <version>1.17.1</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-connector-files</artifactId>
-      <version>1.20.0</version>
+      <version>1.17.1</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-csv</artifactId>
-      <version>1.20.0</version>
+      <version>1.17.1</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-table-api-java-bridge</artifactId>
-      <version>1.20.0</version>
+      <version>1.17.1</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-table-planner_2.12</artifactId>
-      <version>1.20.0</version>
+      <version>1.17.1</version>
       <type>test-jar</type>
       <scope>test</scope>
       <exclusions>

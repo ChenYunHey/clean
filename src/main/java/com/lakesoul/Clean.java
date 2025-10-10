@@ -23,8 +23,6 @@ import org.slf4j.LoggerFactory;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
-import java.sql.SQLException;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Properties;
@@ -115,14 +113,12 @@ public class Clean {
                         try {
                             JSONObject json = JSON.parseObject(value);
                             String tableName = json.getString("tableName");
-
                             if ("partition_info".equals(tableName)) {
                                 ctx.output(partitionInfoTag, value);
                             } else if ("discard_compressed_file_info".equals(tableName)) {
                                 ctx.output(discardFileInfoTag, value);
                             }
                         } catch (Exception e) {
-                            // 如果解析失败，可以打印或发往错误流
                             System.err.println("JSON parse error: " + e.getMessage());
                         }
                     }
@@ -131,12 +127,7 @@ public class Clean {
         SideOutputDataStream<String> partitionInfoStream = mainStream.getSideOutput(partitionInfoTag);
         SideOutputDataStream<String> discardFileInfoStream = mainStream.getSideOutput(discardFileInfoTag);
 
-        discardFileInfoStream.map(new DiscardPathMapFunction()).filter(Objects::nonNull).process(new ProcessFunction<HashMap<String, Long>, String>() {
-            @Override
-            public void processElement(HashMap<String, Long> value, ProcessFunction<HashMap<String, Long>, String>.Context ctx, Collector<String> out) throws Exception {
-
-            }
-        });
+        //discardFileInfoStream.map(new DiscardPathMapFunction()).filter(Objects::nonNull).keyBy(value -> value.f0).process(new DiscardFilePathProcessFunction(pgUrl,userName,passWord,expiredTime));
 
         CleanUtils utils = new CleanUtils();
         final OutputTag<PartitionInfoRecordGets.PartitionInfo> compactionCommitTag =
@@ -163,7 +154,6 @@ public class Clean {
                 .keyBy(value -> value.table_id + "/" + value.partition_desc)
                 .process(new CompactProcessFunction(pgUrl, userName, passWord));
 
-        compactiomStreaming.print();
 
         MapStateDescriptor<String, CompactProcessFunction.CompactionOut> broadcastStateDesc =
                 new MapStateDescriptor<>(
@@ -179,6 +169,13 @@ public class Clean {
 
         connectedStream.process(new CompactionBroadcastProcessFunction(broadcastStateDesc, pgUrl, userName, passWord, expiredTime, ontimerInterval));
 
+        discardFileInfoStream
+                .map(new DiscardPathMapFunction())
+                .filter(value -> !value.f0.equals("delete"))
+                .keyBy(value -> value.f0)
+                .process(new DiscardFilePathProcessFunction(pgUrl,userName,passWord,expiredTime))
+                .name("处理新版过期数据");
+        //discardFileInfoStream.map(new DiscardPathMapFunction()).filter(value -> !value.f0.equals("delete")).print();
         env.execute();
 
 

@@ -1,9 +1,9 @@
 package com.lakesoul;
 
-import org.apache.flink.api.common.functions.OpenContext;
 import org.apache.flink.api.common.state.ValueState;
-import org.apache.flink.api.common.state.ValueStateDeclaration;
+
 import org.apache.flink.api.common.state.ValueStateDescriptor;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import com.lakesoul.PartitionInfoRecordGets.PartitionInfo;
 import org.apache.flink.util.Collector;
@@ -28,7 +28,7 @@ public class CompactProcessFunction extends KeyedProcessFunction<String, Partiti
     }
 
     @Override
-    public void open(OpenContext openContext) throws Exception {
+    public void open(Configuration openContext) throws Exception {
         Class.forName("org.postgresql.Driver");
         pgConnection = DriverManager.getConnection(pgUrl,userName,password);
         ValueStateDescriptor<Long> switchCompactionVersionDesc = new ValueStateDescriptor<>("switchCompactionVersion",
@@ -58,12 +58,8 @@ public class CompactProcessFunction extends KeyedProcessFunction<String, Partiti
             }
             if (isOldCompaction && version > current) {
                 switchCompactionVersionState.update(version);
-                current = version;
-
             }
             out.collect(new CompactionOut(tableId, partitionDesc, version, timestamp, isOldCompaction, switchCompactionVersionState.value()));
-
-            System.out.println("current version:" + switchCompactionVersionState.value());
 
         }
     }

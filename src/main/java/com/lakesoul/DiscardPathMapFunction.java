@@ -2,18 +2,19 @@ package com.lakesoul;
 
 import com.alibaba.fastjson.JSONObject;
 import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.api.java.tuple.Tuple2;
 
 import java.util.HashMap;
 
-public class DiscardPathMapFunction implements MapFunction<String, HashMap<String, Long>> {
+public class DiscardPathMapFunction implements MapFunction<String, Tuple2<String, Long>> {
     @Override
-    public HashMap<String, Long> map(String value) throws Exception {
+    public Tuple2<String, Long> map(String value) throws Exception {
+
         JSONObject parse = (JSONObject) JSONObject.parse(value);
         String PGtableName = parse.get("tableName").toString();
         JSONObject commitJson = null;
-        HashMap<String, Long> discardFileMap = new HashMap<>();
-
-        if (PGtableName.equals("partition_info")){
+        Tuple2<String, Long> filePathInfo = new Tuple2<>();
+        if (PGtableName.equals("discard_compressed_file_info")){
             if (!parse.getJSONObject("after").isEmpty()){
                 commitJson = (JSONObject) parse.get("after");
             } else {
@@ -24,9 +25,13 @@ public class DiscardPathMapFunction implements MapFunction<String, HashMap<Strin
         if (!eventOp.equals("delete")){
             String filePath = commitJson.getString("file_path");
             long timestamp = commitJson.getLong("timestamp");
-            discardFileMap.put(filePath, timestamp);
-            return discardFileMap;
+            filePathInfo.f0 = filePath;
+            filePathInfo.f1 = timestamp;
+            return filePathInfo;
+        } else {
+            filePathInfo.f0 = "delete";
+            filePathInfo.f1 = -5l;
+            return filePathInfo;
         }
-        return null;
     }
 }
