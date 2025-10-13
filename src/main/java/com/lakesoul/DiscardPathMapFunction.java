@@ -4,9 +4,8 @@ import com.alibaba.fastjson.JSONObject;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.java.tuple.Tuple2;
 
-import java.util.HashMap;
-
 public class DiscardPathMapFunction implements MapFunction<String, Tuple2<String, Long>> {
+
     @Override
     public Tuple2<String, Long> map(String value) throws Exception {
 

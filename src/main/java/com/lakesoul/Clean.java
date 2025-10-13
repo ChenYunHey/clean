@@ -6,6 +6,8 @@ import com.lakesoul.utils.SourceOptions;
 import com.ververica.cdc.connectors.base.options.StartupOptions;
 import com.ververica.cdc.connectors.base.source.jdbc.JdbcIncrementalSource;
 import com.ververica.cdc.connectors.postgres.source.PostgresSourceBuilder;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
@@ -21,6 +23,7 @@ import org.apache.flink.util.OutputTag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.util.List;
@@ -44,6 +47,8 @@ public class Clean {
     private static CleanUtils cleanUtils;
     private static String targetTables;
     private static String startMode;
+    public static DataSource dataSource;
+
 
     public static void main(String[] args) throws Exception {
         ParameterTool parameter = ParameterTool.fromArgs(args);
@@ -129,6 +134,23 @@ public class Clean {
 
         //discardFileInfoStream.map(new DiscardPathMapFunction()).filter(Objects::nonNull).keyBy(value -> value.f0).process(new DiscardFilePathProcessFunction(pgUrl,userName,passWord,expiredTime));
 
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl(pgUrl);
+        config.setUsername(userName);
+        config.setPassword(passWord);
+        config.setDriverClassName("org.postgresql.Driver");
+
+        config.setMaximumPoolSize(5);            // 每个 TM 的最大连接数
+        config.setMinimumIdle(1);
+        config.setConnectionTimeout(10000);      // 10 秒超时
+        config.setIdleTimeout(60000);            // 1 分钟空闲回收
+        config.setMaxLifetime(300000);           // 5 分钟重建连接
+        config.setAutoCommit(true);
+        config.addDataSourceProperty("cachePrepStmts", "true");
+        config.addDataSourceProperty("prepStmtCacheSize", "250");
+        config.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
+
+        dataSource = new HikariDataSource(config);
         CleanUtils utils = new CleanUtils();
         final OutputTag<PartitionInfoRecordGets.PartitionInfo> compactionCommitTag =
                 new OutputTag<>("compactionCommit"){};
