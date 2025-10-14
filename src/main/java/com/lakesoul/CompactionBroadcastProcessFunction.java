@@ -23,6 +23,7 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
 
     private final MapStateDescriptor<String, CompactProcessFunction.CompactionOut> broadcastStateDesc;
     private transient ValueState<PartitionInfoRecordGets.PartitionInfo> elementState;
+    private ValueState<Long> timerTsState;
 
     private final String pgUrl;
     private final String pgUserName;
@@ -48,7 +49,10 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
         ValueStateDescriptor<PartitionInfoRecordGets.PartitionInfo> desc =
                 new ValueStateDescriptor<>(
                         "elementState",
-                        TypeInformation.of(new TypeHint<PartitionInfoRecordGets.PartitionInfo>() {}));
+                        TypeInformation.of(new TypeHint<>() {}));
+        timerTsState = getRuntimeContext().getState(
+                new ValueStateDescriptor<>("timerTsState", Long.class)
+        );
         elementState = getRuntimeContext().getState(desc);
         cleanUtils = new CleanUtils();
         HikariConfig config = new HikariConfig();
@@ -80,7 +84,6 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
                 ctx.getBroadcastState(broadcastStateDesc);
 
         String key = value.getTableId() + "/" + value.getPartitionDesc();
-
         CompactProcessFunction.CompactionOut current = state.get(key);
 
         if (current == null) {
@@ -89,7 +92,6 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
         } else {
             // 计算最大的 switchVersion
             long maxSwitchVersion = Math.max(current.switchVersion, value.switchVersion);
-
             if (value.getTimestamp() > current.getTimestamp()) {
                 // 如果新来的 timestamp 更大 → 用新值覆盖，但 switchVersion 保留最大
                 state.put(key, new CompactProcessFunction.CompactionOut(
@@ -116,46 +118,61 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
         }
     }
 
-
     @Override
     public void processElement(
             PartitionInfoRecordGets.PartitionInfo value,
             ReadOnlyContext ctx,
             Collector<PartitionInfoRecordGets.PartitionInfo> out) throws Exception {
-
         elementState.update(value);
         ReadOnlyBroadcastState<String, CompactProcessFunction.CompactionOut> state =
                 ctx.getBroadcastState(broadcastStateDesc);
-        String key = value.table_id + "/" + value.partition_desc;
+        String key = value.tableId + "/" + value.partitionDesc;
         long valueTimestamp = value.timestamp;
         CompactProcessFunction.CompactionOut compaction = state.get(key);
-        if (compaction != null) {
-            // enrich 主流数据
-            long compactTimstamp = compaction.timestamp;
-            log.info("当前时间差为：" + (valueTimestamp - compactTimstamp));
-            long currTimestamp = System.currentTimeMillis();
-            if (valueTimestamp < compactTimstamp && currTimestamp - valueTimestamp > expiredTime){
-                log.info("执行version为"+ value.version +"的删除操作");
-                CleanUtils cleanUtils = new CleanUtils();
-                boolean latestCompactVersionIsOld = state.get(key).isOldCompaction();
-                boolean belongOldCompaction = value.version < state.get(key).switchVersion || latestCompactVersionIsOld;
-                try (Connection connection = dataSource.getConnection()) {
-                    cleanUtils.deleteFileAndDataCommitInfo(value.snapshot, value.table_id, value.partition_desc, connection, belongOldCompaction);
-                    cleanUtils.cleanPartitionInfo(value.table_id, value.partition_desc, value.version, connection);
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-                log.info("version: " + value.version + " 执行旧版清理： " + belongOldCompaction);
+        if (valueTimestamp == -5L) {
+            if (elementState.value() != null) {
                 elementState.clear();
-            } else {
-                long currentProcessingTime = ctx.timerService().currentProcessingTime();
-                log.info("version: " + value.version + "注册定时器，等待执行");
-                ctx.timerService().registerProcessingTimeTimer(currentProcessingTime + ontimerInterval);
+                if (timerTsState.value() != null) {
+                    ctx.timerService().deleteProcessingTimeTimer(timerTsState.value());
+                    //如果识别出大于最新compaction记录的数据被删除，识为为该分区被删除，清理相关状态
+                    if (value.version >= state.get(key).version && compaction != null){
+                        state.clear();
+                    }
+                }
             }
         } else {
-            log.info("version :" + value.version +"没有过期，再次注册定时器");
-            long currentProcessingTime = ctx.timerService().currentProcessingTime();
-            ctx.timerService().registerProcessingTimeTimer(currentProcessingTime + ontimerInterval);
+            if (compaction != null) {
+                // enrich 主流数据
+                long compactTimstamp = compaction.timestamp;
+                log.info("当前时间差为：" + (valueTimestamp - compactTimstamp));
+                long currTimestamp = System.currentTimeMillis();
+                if (valueTimestamp < compactTimstamp && currTimestamp - valueTimestamp > expiredTime){
+                    log.info("执行version为"+ value.version +"的删除操作");
+                    CleanUtils cleanUtils = new CleanUtils();
+                    boolean latestCompactVersionIsOld = state.get(key).isOldCompaction();
+                    boolean belongOldCompaction = value.version < state.get(key).switchVersion || latestCompactVersionIsOld;
+                    try (Connection connection = dataSource.getConnection()) {
+                        cleanUtils.deleteFileAndDataCommitInfo(value.snapshot, value.tableId, value.partitionDesc, connection, belongOldCompaction);
+                        cleanUtils.cleanPartitionInfo(value.tableId, value.partitionDesc, value.version, connection);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                    log.info("version: " + value.version + " 执行旧版清理： " + belongOldCompaction);
+                    elementState.clear();
+                } else {
+                    long currentProcessingTime = ctx.timerService().currentProcessingTime();
+                    log.info("version: " + value.version + "注册定时器，等待执行");
+                    long triggerTime = currentProcessingTime + ontimerInterval;
+                    timerTsState.update(triggerTime);
+                    ctx.timerService().registerProcessingTimeTimer(triggerTime);
+                }
+            } else {
+                log.info("version :" + value.version +"没有过期，再次注册定时器");
+                long currentProcessingTime = ctx.timerService().currentProcessingTime();
+                long triggerTime = currentProcessingTime + ontimerInterval;
+                timerTsState.update(triggerTime);
+                ctx.timerService().registerProcessingTimeTimer(triggerTime);
+            }
         }
     }
 
@@ -178,26 +195,28 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
             long currTimestamp = value.timestamp;
             long compactTimestamp = compactionOut.timestamp;
             if (currTimestamp < compactTimestamp && timestamp - currTimestamp > expiredTime){
-                //TODO
                 boolean latestCompactVersionIsOld = state.get(key).isOldCompaction();
                 boolean belongOldCompaction = value.version < state.get(key).switchVersion || latestCompactVersionIsOld;
-                log.info("version: " + value.version + " 执行旧版清理： " + belongOldCompaction);
+                log.info("表id: " + value.tableId +"====version: " + value.version + " 执行旧版清理： " + belongOldCompaction);
                 try (Connection connection = dataSource.getConnection()) {
-                    cleanUtils.deleteFileAndDataCommitInfo(value.snapshot, value.table_id, value.partition_desc, connection, belongOldCompaction);
-                    cleanUtils.cleanPartitionInfo(value.table_id, value.partition_desc, value.version, connection);
+                    cleanUtils.deleteFileAndDataCommitInfo(value.snapshot, value.tableId, value.partitionDesc, connection, belongOldCompaction);
+                    cleanUtils.cleanPartitionInfo(value.tableId, value.partitionDesc, value.version, connection);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
                 elementState.clear();
             } else {
-                log.info("version: " + value.version + "再次注册定时器，等待执行");
-                ctx.timerService().registerProcessingTimeTimer(timestamp + ontimerInterval);
+                log.info("表id: " + value.tableId +"=====version: " + value.version + "再次注册定时器，等待执行");
+                long triggerTime = timestamp + ontimerInterval;
+                timerTsState.update(triggerTime);
+                ctx.timerService().registerProcessingTimeTimer(triggerTime);
             }
         } else {
             log.info("version: " + value.version + "再次注册定时器，等待执行");
-            ctx.timerService().registerProcessingTimeTimer(timestamp + ontimerInterval);
+            long triggerTime = timestamp + ontimerInterval;
+            timerTsState.update(triggerTime);
+            ctx.timerService().registerProcessingTimeTimer(triggerTime);
         }
-
     }
 }
 

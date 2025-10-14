@@ -156,26 +156,30 @@ public class Clean {
                 new OutputTag<>("compactionCommit"){};
         Connection connection = DriverManager.getConnection(pgUrl, userName, passWord);
         List<String> tableIdList = utils.getTableIdByTableName(targetTables, connection);
+
+        //partitionInfoStream.map(new PartitionInfoRecordGets.metaMapper(tableIdList)).print();
         SingleOutputStreamOperator<PartitionInfoRecordGets.PartitionInfo> mainStreaming = partitionInfoStream.map(new PartitionInfoRecordGets.metaMapper(tableIdList))
-                .filter(Objects::nonNull).process(new ProcessFunction<PartitionInfoRecordGets.PartitionInfo, PartitionInfoRecordGets.PartitionInfo>() {
+                .process(new ProcessFunction<PartitionInfoRecordGets.PartitionInfo, PartitionInfoRecordGets.PartitionInfo>() {
                     @Override
                     public void processElement(PartitionInfoRecordGets.PartitionInfo value,
                                                ProcessFunction<PartitionInfoRecordGets.PartitionInfo,
                                                        PartitionInfoRecordGets.PartitionInfo>.Context ctx,
                                                Collector<PartitionInfoRecordGets.PartitionInfo> out) throws Exception {
-                        if (value.commit_op.equals("CompactionCommit") || value.commit_op.equals("UpdateCommit")){
-                            ctx.output(compactionCommitTag,value);
+                        if (value.commitOp != null){ //对于delete事件，只能获取到 partition_info key值
+                            if (value.commitOp.equals("CompactionCommit") || value.commitOp.equals("UpdateCommit")){
+                                ctx.output(compactionCommitTag,value);
+                            }
                         }
                         out.collect(value);
 
                     }
                 });
-        SideOutputDataStream<PartitionInfoRecordGets.PartitionInfo> compactStreaming = mainStreaming.getSideOutput(compactionCommitTag);
-        KeyedStream<PartitionInfoRecordGets.PartitionInfo, String> partitionInfoStringKeyedStream = mainStreaming.keyBy(value -> value.table_id + "/" + value.partition_desc + "/" + value.version);
-        SingleOutputStreamOperator<CompactProcessFunction.CompactionOut> compactiomStreaming = compactStreaming
-                .keyBy(value -> value.table_id + "/" + value.partition_desc)
-                .process(new CompactProcessFunction(pgUrl, userName, passWord));
 
+        SideOutputDataStream<PartitionInfoRecordGets.PartitionInfo> compactStreaming = mainStreaming.getSideOutput(compactionCommitTag);
+        KeyedStream<PartitionInfoRecordGets.PartitionInfo, String> partitionInfoStringKeyedStream = mainStreaming.keyBy(value -> value.tableId + "/" + value.partitionDesc + "/" + value.version);
+        SingleOutputStreamOperator<CompactProcessFunction.CompactionOut> compactiomStreaming = compactStreaming
+                .keyBy(value -> value.tableId + "/" + value.partitionDesc)
+                .process(new CompactProcessFunction(pgUrl, userName, passWord));
 
         MapStateDescriptor<String, CompactProcessFunction.CompactionOut> broadcastStateDesc =
                 new MapStateDescriptor<>(

@@ -66,9 +66,9 @@ public  class ProcessClean extends KeyedProcessFunction<String, PartitionInfo, S
 
     @Override
     public void processElement(PartitionInfo value, KeyedProcessFunction<String, PartitionInfo, String>.Context ctx, Collector<String> out) throws Exception {
-        String tableId = value.table_id;
-        String partitionDesc = value.partition_desc;
-        String commitOp = value.commit_op;
+        String tableId = value.tableId;
+        String partitionDesc = value.partitionDesc;
+        String commitOp = value.commitOp;
         long timestamp = value.timestamp;
         int version = value.version;
         List<String> snapshot = value.snapshot;

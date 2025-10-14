@@ -59,27 +59,29 @@ public class CompactProcessFunction extends KeyedProcessFunction<String, Partiti
 
     @Override
     public void processElement(PartitionInfo value, KeyedProcessFunction<String, PartitionInfo, CompactionOut>.Context ctx, Collector<CompactionOut> out) throws Exception {
-        String partitionDesc = value.partition_desc;
-        String tableId = value.table_id;
+        String partitionDesc = value.partitionDesc;
+        String tableId = value.tableId;
         long timestamp = value.timestamp;
         long version = value.version;
-        String commitOp = value.commit_op;
+        String commitOp = value.commitOp;
         List<String> snapshot = value.snapshot;
         CleanUtils cleanUtils = new CleanUtils();
         if (snapshot.size() == 1) {
-            Connection pgConnection = dataSource.getConnection();
-            boolean isOldCompaction = commitOp.equals("UpdateCommit")
-                    || cleanUtils.getCompactVersion(tableId, partitionDesc, version, pgConnection);
-            Long current = switchCompactionVersionState.value();
-            if (current == null) {
-                current = -1L;
-            }
-            if (isOldCompaction && version > current) {
-                switchCompactionVersionState.update(version);
-            }
-            out.collect(new CompactionOut(tableId, partitionDesc, version, timestamp, isOldCompaction, switchCompactionVersionState.value()));
+            try (Connection pgConnection = dataSource.getConnection()) { // ✅ 自动关闭连接
+                boolean isOldCompaction = commitOp.equals("UpdateCommit")
+                        || cleanUtils.getCompactVersion(tableId, partitionDesc, version, pgConnection);
 
+                Long current = switchCompactionVersionState.value();
+                if (current == null) {
+                    current = -1L;
+                }
+                if (isOldCompaction && version > current) {
+                    switchCompactionVersionState.update(version);
+                }
+                out.collect(new CompactionOut(tableId, partitionDesc, version, timestamp, isOldCompaction, switchCompactionVersionState.value()));
+            }
         }
+
     }
 
     public static class CompactionOut{
