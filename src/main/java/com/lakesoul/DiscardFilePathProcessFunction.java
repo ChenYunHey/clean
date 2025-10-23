@@ -15,6 +15,10 @@ import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 
 /**
  *使用 HikariCP 连接池，解决 Connection 被关闭的问题
@@ -29,8 +33,9 @@ public class DiscardFilePathProcessFunction
     private final String pgPasswd;
     private final long expiredTimestamp;
 
-    private transient ValueState<Long> lastUpdateTimestampState;
-    private transient DataSource dataSource; 
+    private transient ValueState<Long> lastOntimerTimestampState;
+    private transient ValueState<Long> recordTimestampState;
+    private transient DataSource dataSource;
 
     public DiscardFilePathProcessFunction(String pgUrl, String pgUserName, String pgPasswd, long expiredTimestamp) {
         this.pgUrl = pgUrl;
@@ -42,9 +47,13 @@ public class DiscardFilePathProcessFunction
     @Override
     public void open(Configuration parameters) throws Exception {
         // 初始化状态
-        ValueStateDescriptor<Long> desc =
+        ValueStateDescriptor<Long> recordTimestampStateDesc =
+                new ValueStateDescriptor<>("recordTimestampState", Long.class);
+        recordTimestampState = getRuntimeContext().getState(recordTimestampStateDesc);
+
+        ValueStateDescriptor<Long> lastOntimerTimestampStateDesc =
                 new ValueStateDescriptor<>("lastUpdateTimestampState", Long.class);
-        lastUpdateTimestampState = getRuntimeContext().getState(desc);
+        lastOntimerTimestampState = getRuntimeContext().getState(lastOntimerTimestampStateDesc);
 
         HikariConfig config = new HikariConfig();
         config.setJdbcUrl(pgUrl);
@@ -74,41 +83,46 @@ public class DiscardFilePathProcessFunction
         String filePath = value.f0;
         long fileTimestamp = value.f1;
         long currentProcessingTime = ctx.timerService().currentProcessingTime();
-
-        lastUpdateTimestampState.update(fileTimestamp);
-
-        if (currentProcessingTime - fileTimestamp > expiredTimestamp) {
-            log.info("文件 [{}] 已过期，立即清理。", filePath);
-            cleanFileAndRecord(filePath);
-            lastUpdateTimestampState.clear();
+        if (fileTimestamp != -5L){
+            recordTimestampState.update(fileTimestamp);
+            if (currentProcessingTime - fileTimestamp > expiredTimestamp) {
+                log.info("文件 [{}] 已过期，立即清理。", filePath);
+                cleanFileAndRecord(filePath);
+                recordTimestampState.clear();
+            } else {
+                long triggerTime = fileTimestamp + expiredTimestamp;
+                lastOntimerTimestampState.update(triggerTime);
+                ctx.timerService().registerProcessingTimeTimer(triggerTime);
+                LocalDateTime dateTime = LocalDateTime.ofInstant(
+                        Instant.ofEpochMilli(triggerTime),
+                        ZoneId.systemDefault());
+                String formatted = dateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+                log.info("文件 [{}] 未过期，注册定时器将在 {} 触发清理。", filePath, formatted);
+            }
         } else {
-            long triggerTime = fileTimestamp + expiredTimestamp;
-            ctx.timerService().registerProcessingTimeTimer(triggerTime);
-            log.info("文件 [{}] 未过期，注册定时器将在 {} 触发清理。", filePath, triggerTime);
+            if (lastOntimerTimestampState.value() != null){
+                log.info("文件:" + filePath + "已在别处被清理，删除该文件相关的定时器和状态");
+                ctx.timerService().deleteProcessingTimeTimer(lastOntimerTimestampState.value());
+                recordTimestampState.clear();
+            }
         }
     }
 
     @Override
     public void onTimer(long timestamp, OnTimerContext ctx, Collector<String> out) throws Exception {
         String filePath = ctx.getCurrentKey();
-        Long fileTimestamp = lastUpdateTimestampState.value();
+        Long fileTimestamp = recordTimestampState.value();
         if (fileTimestamp == null) return;
-
-        long currentProcessingTime = ctx.timerService().currentProcessingTime();
-        if (currentProcessingTime - fileTimestamp >= expiredTimestamp) {
-            log.info("定时器触发，文件 [{}] 已过期，开始清理。", filePath);
-            cleanFileAndRecord(filePath);
-            lastUpdateTimestampState.clear();
-        } else {
-            log.debug("定时器触发时文件 [{}] 仍未过期，跳过清理。", filePath);
-        }
+        log.info("定时器触发，文件 [{}] 已过期，开始清理。", filePath);
+        cleanFileAndRecord(filePath);
+        recordTimestampState.clear();
+        lastOntimerTimestampState.clear();
     }
 
     private void cleanFileAndRecord(String filePath) {
         CleanUtils cleanUtils = new CleanUtils();
         try {
             cleanUtils.deleteFile(filePath);
-
             try (Connection connection = dataSource.getConnection();
                  PreparedStatement ps = connection.prepareStatement("DELETE FROM discard_compressed_file_info WHERE file_path = ?")) {
                 ps.setString(1, filePath);

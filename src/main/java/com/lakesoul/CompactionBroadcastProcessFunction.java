@@ -13,6 +13,10 @@ import org.slf4j.LoggerFactory;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 
 public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFunction<
         String,  // 主流 key 类型
@@ -53,7 +57,7 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
         timerTsState = getRuntimeContext().getState(
                 new ValueStateDescriptor<>("timerTsState", Long.class)
         );
-        elementState = getRuntimeContext().getState(desc);
+        //elementState = getRuntimeContext().getState(desc);
         cleanUtils = new CleanUtils();
         HikariConfig config = new HikariConfig();
         config.setJdbcUrl(pgUrl);
@@ -131,12 +135,18 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
         CompactProcessFunction.CompactionOut compaction = state.get(key);
         if (valueTimestamp == -5L) {
             if (elementState.value() != null) {
+                log.info("检测到[{}] 在其他地方被清理，清理相关状态",ctx.getCurrentKey());
+                System.out.println("检测到" + ctx.getCurrentKey() + " 在其他地方被清理，清理相关状态");
                 elementState.clear();
                 if (timerTsState.value() != null) {
                     ctx.timerService().deleteProcessingTimeTimer(timerTsState.value());
                     //如果识别出大于最新compaction记录的数据被删除，识为为该分区被删除，清理相关状态
-                    if (value.version >= state.get(key).version && compaction != null){
-                        state.clear();
+                    if (compaction != null){
+                        if (value.version >= state.get(key).version){
+                            System.out.println("清除" + state.get(key) +"压缩状态");
+                            state.clear();
+                            System.out.println(state.get(key) + "========");
+                        }
                     }
                 }
             }
@@ -144,10 +154,9 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
             if (compaction != null) {
                 // enrich 主流数据
                 long compactTimstamp = compaction.timestamp;
-                log.info("当前时间差为：" + (valueTimestamp - compactTimstamp));
                 long currTimestamp = System.currentTimeMillis();
                 if (valueTimestamp < compactTimstamp && currTimestamp - valueTimestamp > expiredTime){
-                    log.info("执行version为"+ value.version +"的删除操作");
+                    log.info("执行version为"+ value.version + " 的删除操作");
                     CleanUtils cleanUtils = new CleanUtils();
                     boolean latestCompactVersionIsOld = state.get(key).isOldCompaction();
                     boolean belongOldCompaction = value.version < state.get(key).switchVersion || latestCompactVersionIsOld;
@@ -161,16 +170,24 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
                     elementState.clear();
                 } else {
                     long currentProcessingTime = ctx.timerService().currentProcessingTime();
-                    log.info("version: " + value.version + "注册定时器，等待执行");
                     long triggerTime = currentProcessingTime + ontimerInterval;
                     timerTsState.update(triggerTime);
+                    LocalDateTime dateTime = LocalDateTime.ofInstant(
+                            Instant.ofEpochMilli(triggerTime),
+                            ZoneId.systemDefault());
+                    String formatted = dateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+                    log.info("表id: " + value.tableId +"=====version: " + value.version + "注册定时器，将在" + formatted + " 执行");
                     ctx.timerService().registerProcessingTimeTimer(triggerTime);
                 }
             } else {
-                log.info("version :" + value.version +"没有过期，再次注册定时器");
                 long currentProcessingTime = ctx.timerService().currentProcessingTime();
                 long triggerTime = currentProcessingTime + ontimerInterval;
                 timerTsState.update(triggerTime);
+                LocalDateTime dateTime = LocalDateTime.ofInstant(
+                        Instant.ofEpochMilli(triggerTime),
+                        ZoneId.systemDefault());
+                String formatted = dateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+                log.info("表id: " + value.tableId +"=====version: " + value.version + "注册定时器，将在" + formatted + " 执行");
                 ctx.timerService().registerProcessingTimeTimer(triggerTime);
             }
         }
@@ -189,9 +206,9 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
         String key = tableId + "/" + partitionDesc;
         CompactProcessFunction.CompactionOut compactionOut = state.get(key);
         PartitionInfoRecordGets.PartitionInfo value = elementState.value();
-
+        System.out.println(key + " 进入定时器");
         if (compactionOut != null) {
-            log.info("当前新旧压缩切换版本为：" + state.get(key).switchVersion);
+            log.info("表：" + tableId +"当前新旧压缩切换版本为：" + state.get(key).switchVersion);
             long currTimestamp = value.timestamp;
             long compactTimestamp = compactionOut.timestamp;
             if (currTimestamp < compactTimestamp && timestamp - currTimestamp > expiredTime){
@@ -201,20 +218,29 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
                 try (Connection connection = dataSource.getConnection()) {
                     cleanUtils.deleteFileAndDataCommitInfo(value.snapshot, value.tableId, value.partitionDesc, connection, belongOldCompaction);
                     cleanUtils.cleanPartitionInfo(value.tableId, value.partitionDesc, value.version, connection);
+                    timerTsState.clear();
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
                 elementState.clear();
             } else {
-                log.info("表id: " + value.tableId +"=====version: " + value.version + "再次注册定时器，等待执行");
                 long triggerTime = timestamp + ontimerInterval;
                 timerTsState.update(triggerTime);
+                LocalDateTime dateTime = LocalDateTime.ofInstant(
+                        Instant.ofEpochMilli(triggerTime),
+                        ZoneId.systemDefault());
+                String formatted = dateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+                log.info("表id: " + tableId +"=====version: " + value.version + "注册定时器，将在" + formatted + " 执行");
                 ctx.timerService().registerProcessingTimeTimer(triggerTime);
             }
         } else {
-            log.info("version: " + value.version + "再次注册定时器，等待执行");
             long triggerTime = timestamp + ontimerInterval;
             timerTsState.update(triggerTime);
+            LocalDateTime dateTime = LocalDateTime.ofInstant(
+                    Instant.ofEpochMilli(triggerTime),
+                    ZoneId.systemDefault());
+            String formatted = dateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            log.info("表id: " + tableId +"=====version: " + value.version + "注册定时器，将在" + formatted + " 执行");
             ctx.timerService().registerProcessingTimeTimer(triggerTime);
         }
     }

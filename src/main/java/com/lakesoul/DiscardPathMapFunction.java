@@ -28,8 +28,8 @@ public class DiscardPathMapFunction implements MapFunction<String, Tuple2<String
             filePathInfo.f1 = timestamp;
             return filePathInfo;
         } else {
-            filePathInfo.f0 = "delete";
-            filePathInfo.f1 = -5l;
+            filePathInfo.f0 = commitJson.getString("file_path");
+            filePathInfo.f1 = -5L;
             return filePathInfo;
         }
     }

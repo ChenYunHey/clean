@@ -51,6 +51,7 @@ public class CleanUtils {
             }
         }
     }
+
     public void deleteFile(String filePath) throws SQLException {
         Configuration hdfsConfig = new Configuration();
         if (filePath.startsWith(HDFS_URI_PREFIX)) {
@@ -101,7 +102,6 @@ public class CleanUtils {
         }
     }
 
-
     public boolean getCompactVersion(String tableId, String partitionDesc, long version, Connection connection) throws SQLException {
 
         String snapshotSql = "SELECT snapshot FROM partition_info " +
@@ -149,9 +149,6 @@ public class CleanUtils {
     }
 
     public void deleteFileAndDataCommitInfo(List<String> snapshot, String tableId, String partitionDesc, Connection connection, Boolean oldCompaction) {
-        logger.info("清理旧版压缩数据");
-        logger.info("当前oldCompaction值：" + oldCompaction);
-        logger.info("打印当前snapshot值"+ snapshot.size());
         snapshot.forEach(commitId -> {
             if (oldCompaction) {
                 String sql = "SELECT \n" +
@@ -197,7 +194,6 @@ public class CleanUtils {
                 }
         );
     }
-
 
     private void deleteEmptyParentDirectories(FileSystem fs, Path directory) throws IOException {
         if (directory == null) {

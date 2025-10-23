@@ -47,7 +47,6 @@ public class Clean {
     private static CleanUtils cleanUtils;
     private static String targetTables;
     private static String startMode;
-    public static DataSource dataSource;
 
 
     public static void main(String[] args) throws Exception {
@@ -78,8 +77,8 @@ public class Clean {
             startupOptions = StartupOptions.earliest();
         }
 
-        //int ontimerInterval = 60000;
-        int ontimerInterval = parameter.getInt(SourceOptions.ONTIMER_INTERVAL.key(), 10) * 60000;
+        int ontimerInterval = 60000;
+        //int ontimerInterval = parameter.getInt(SourceOptions.ONTIMER_INTERVAL.key(), 10) * 60000 * 60;
         //expiredTime = 60000;
         expiredTime = parameter.getInt(SourceOptions.DATA_EXPIRED_TIME.key(),120000) ;
         if (expiredTime < 10){
@@ -132,25 +131,6 @@ public class Clean {
         SideOutputDataStream<String> partitionInfoStream = mainStream.getSideOutput(partitionInfoTag);
         SideOutputDataStream<String> discardFileInfoStream = mainStream.getSideOutput(discardFileInfoTag);
 
-        //discardFileInfoStream.map(new DiscardPathMapFunction()).filter(Objects::nonNull).keyBy(value -> value.f0).process(new DiscardFilePathProcessFunction(pgUrl,userName,passWord,expiredTime));
-
-        HikariConfig config = new HikariConfig();
-        config.setJdbcUrl(pgUrl);
-        config.setUsername(userName);
-        config.setPassword(passWord);
-        config.setDriverClassName("org.postgresql.Driver");
-
-        config.setMaximumPoolSize(5);            // 每个 TM 的最大连接数
-        config.setMinimumIdle(1);
-        config.setConnectionTimeout(10000);      // 10 秒超时
-        config.setIdleTimeout(60000);            // 1 分钟空闲回收
-        config.setMaxLifetime(300000);           // 5 分钟重建连接
-        config.setAutoCommit(true);
-        config.addDataSourceProperty("cachePrepStmts", "true");
-        config.addDataSourceProperty("prepStmtCacheSize", "250");
-        config.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
-
-        dataSource = new HikariDataSource(config);
         CleanUtils utils = new CleanUtils();
         final OutputTag<PartitionInfoRecordGets.PartitionInfo> compactionCommitTag =
                 new OutputTag<>("compactionCommit"){};
@@ -202,7 +182,7 @@ public class Clean {
                 .process(new DiscardFilePathProcessFunction(pgUrl,userName,passWord,expiredTime))
                 .name("处理新版过期数据");
         //discardFileInfoStream.map(new DiscardPathMapFunction()).filter(value -> !value.f0.equals("delete")).print();
-        env.execute();
+        env.execute("清理服务");
 
 
     }
