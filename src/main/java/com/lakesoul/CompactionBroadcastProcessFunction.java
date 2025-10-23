@@ -57,7 +57,7 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
         timerTsState = getRuntimeContext().getState(
                 new ValueStateDescriptor<>("timerTsState", Long.class)
         );
-        //elementState = getRuntimeContext().getState(desc);
+        elementState = getRuntimeContext().getState(desc);
         cleanUtils = new CleanUtils();
         HikariConfig config = new HikariConfig();
         config.setJdbcUrl(pgUrl);
