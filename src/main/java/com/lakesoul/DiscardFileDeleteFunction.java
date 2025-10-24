@@ -20,7 +20,7 @@ public class DiscardFileDeleteFunction extends ProcessFunction<String, String> {
     private final ConcurrentLinkedQueue<String> GLOBAL_PENDING_DELETES = new ConcurrentLinkedQueue<>();
     private ExecutorService asyncExecutor;
     private ScheduledExecutorService scheduler;
-    private final int batchSize = 100;
+    private final int batchSize = 500;
     private final long flushIntervalMs = 5000;
 
     private final String pgUrl;
@@ -52,8 +52,7 @@ public class DiscardFileDeleteFunction extends ProcessFunction<String, String> {
         config.addDataSourceProperty("prepStmtCacheSize", "250");
         config.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
         dataSource = new HikariDataSource(config);
-
-         if (asyncExecutor == null) {
+        if (asyncExecutor == null) {
             asyncExecutor = Executors.newFixedThreadPool(1);
         }
         if (scheduler == null) {
@@ -72,7 +71,6 @@ public class DiscardFileDeleteFunction extends ProcessFunction<String, String> {
             String path = GLOBAL_PENDING_DELETES.poll();
             if (path != null) batch.add(path);
         }
-        System.out.println(batch.size() + "============");
 
         if (batch.isEmpty()) return;
         asyncExecutor.submit(() -> {
@@ -89,7 +87,6 @@ public class DiscardFileDeleteFunction extends ProcessFunction<String, String> {
                 try {
                     CleanUtils cleanUtils = new CleanUtils();
                     cleanUtils.deleteFile(path);
-                    log.info("删除文件 [{}] 成功", path);
                 } catch (Exception e) {
                     log.error("删除文件失败 [{}]", path, e);
                 }

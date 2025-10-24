@@ -1,7 +1,5 @@
 package com.lakesoul;
 
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.java.tuple.Tuple2;
@@ -11,10 +9,6 @@ import org.apache.flink.util.Collector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.sql.DataSource;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -64,7 +58,6 @@ public class DiscardFilePathProcessFunction
             recordTimestampState.update(fileTimestamp);
             if (currentProcessingTime - fileTimestamp > expiredTimestamp) {
                 log.info("文件 [{}] 已过期，加入清理队列准备清理。", filePath);
-                //cleanFileAndRecord(filePath);
                 out.collect(value.f0);
                 recordTimestampState.clear();
             } else {
@@ -91,8 +84,7 @@ public class DiscardFilePathProcessFunction
         String filePath = ctx.getCurrentKey();
         Long fileTimestamp = recordTimestampState.value();
         if (fileTimestamp == null) return;
-        log.info("文件 [{}] 已过期，加入清理队列开始清理。", filePath);
-        //cleanFileAndRecord(filePath);
+        log.info("文件 [{}] 已过期，加入清理队列准备清理。", filePath);
         out.collect(filePath);
         recordTimestampState.clear();
         lastOntimerTimestampState.clear();

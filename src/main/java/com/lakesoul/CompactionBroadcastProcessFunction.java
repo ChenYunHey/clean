@@ -34,7 +34,6 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
     private final String pgPasswd;
     private final int expiredTime;
     private final long ontimerInterval;
-    //private transient Connection pgConnection;
     private static CleanUtils cleanUtils;
     private transient DataSource dataSource;
 
@@ -127,7 +126,6 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
             PartitionInfoRecordGets.PartitionInfo value,
             ReadOnlyContext ctx,
             Collector<PartitionInfoRecordGets.PartitionInfo> out) throws Exception {
-        elementState.update(value);
         ReadOnlyBroadcastState<String, CompactProcessFunction.CompactionOut> state =
                 ctx.getBroadcastState(broadcastStateDesc);
         String key = value.tableId + "/" + value.partitionDesc;
@@ -151,6 +149,7 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
                 }
             }
         } else {
+            elementState.update(value);
             if (compaction != null) {
                 // enrich 主流数据
                 long compactTimstamp = compaction.timestamp;
@@ -229,7 +228,7 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
                         Instant.ofEpochMilli(triggerTime),
                         ZoneId.systemDefault());
                 String formatted = dateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-                log.info(currentKey + value.version + "注册定时器，将在" + formatted + " 执行");
+                log.info(currentKey + "注册定时器，将在" + formatted + " 执行");
                 ctx.timerService().registerProcessingTimeTimer(triggerTime);
             }
         } else {
@@ -244,4 +243,3 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
         }
     }
 }
-

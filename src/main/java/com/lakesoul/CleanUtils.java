@@ -177,7 +177,6 @@ public class CleanUtils {
                         deleteFile(oldCompactionFileList);
                     }
                 } catch (SQLException e) {
-                    // 处理SQL异常
                     e.printStackTrace();
 
                 }
