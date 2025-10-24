@@ -136,7 +136,7 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
         if (valueTimestamp == -5L) {
             if (elementState.value() != null) {
                 log.info("检测到[{}] 在其他地方被清理，清理相关状态",ctx.getCurrentKey());
-                System.out.println("检测到" + ctx.getCurrentKey() + " 在其他地方被清理，清理相关状态");
+                //System.out.println("检测到" + ctx.getCurrentKey() + " 在其他地方被清理，清理相关状态");
                 elementState.clear();
                 if (timerTsState.value() != null) {
                     ctx.timerService().deleteProcessingTimeTimer(timerTsState.value());
@@ -156,7 +156,7 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
                 long compactTimstamp = compaction.timestamp;
                 long currTimestamp = System.currentTimeMillis();
                 if (valueTimestamp < compactTimstamp && currTimestamp - valueTimestamp > expiredTime){
-                    log.info("执行version为"+ value.version + " 的删除操作");
+                    log.info(ctx.getCurrentKey() + " 执行删除操作");
                     CleanUtils cleanUtils = new CleanUtils();
                     boolean latestCompactVersionIsOld = state.get(key).isOldCompaction();
                     boolean belongOldCompaction = value.version < state.get(key).switchVersion || latestCompactVersionIsOld;
@@ -166,7 +166,7 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
                     } catch (Exception e) {
                         throw new RuntimeException(e);
                     }
-                    log.info("version: " + value.version + " 执行旧版清理： " + belongOldCompaction);
+                    log.info(ctx.getCurrentKey() + " 执行旧版清理： " + belongOldCompaction);
                     elementState.clear();
                 } else {
                     long currentProcessingTime = ctx.timerService().currentProcessingTime();
@@ -176,7 +176,7 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
                             Instant.ofEpochMilli(triggerTime),
                             ZoneId.systemDefault());
                     String formatted = dateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-                    log.info("表id: " + value.tableId +"=====version: " + value.version + "注册定时器，将在" + formatted + " 执行");
+                    log.info(ctx.getCurrentKey() + "注册定时器，将在" + formatted + " 执行");
                     ctx.timerService().registerProcessingTimeTimer(triggerTime);
                 }
             } else {
@@ -187,7 +187,7 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
                         Instant.ofEpochMilli(triggerTime),
                         ZoneId.systemDefault());
                 String formatted = dateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-                log.info("表id: " + value.tableId +"=====version: " + value.version + "注册定时器，将在" + formatted + " 执行");
+                log.info(ctx.getCurrentKey() + "注册定时器，将在" + formatted + " 执行");
                 ctx.timerService().registerProcessingTimeTimer(triggerTime);
             }
         }
@@ -203,18 +203,17 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
         String partitionDesc = split[1];
         ReadOnlyBroadcastState<String, CompactProcessFunction.CompactionOut> state =
                 ctx.getBroadcastState(broadcastStateDesc);
-        String key = tableId + "/" + partitionDesc;
-        CompactProcessFunction.CompactionOut compactionOut = state.get(key);
+        String partitionDescKey = tableId + "/" + partitionDesc;
+        CompactProcessFunction.CompactionOut compactionOut = state.get(partitionDescKey);
         PartitionInfoRecordGets.PartitionInfo value = elementState.value();
-        System.out.println(key + " 进入定时器");
         if (compactionOut != null) {
-            log.info("表：" + tableId +"当前新旧压缩切换版本为：" + state.get(key).switchVersion);
-            long currTimestamp = value.timestamp;
+            log.info(currentKey + state.get(partitionDescKey).switchVersion);
+            long eventTimestamp = value.timestamp;
             long compactTimestamp = compactionOut.timestamp;
-            if (currTimestamp < compactTimestamp && timestamp - currTimestamp > expiredTime){
-                boolean latestCompactVersionIsOld = state.get(key).isOldCompaction();
-                boolean belongOldCompaction = value.version < state.get(key).switchVersion || latestCompactVersionIsOld;
-                log.info("表id: " + value.tableId +"====version: " + value.version + " 执行旧版清理： " + belongOldCompaction);
+            if (eventTimestamp < compactTimestamp && timestamp - eventTimestamp > expiredTime){
+                boolean latestCompactVersionIsOld = state.get(partitionDescKey).isOldCompaction();
+                boolean belongOldCompaction = value.version < state.get(partitionDescKey).switchVersion || latestCompactVersionIsOld;
+                log.info(currentKey + " 执行旧版清理： " + belongOldCompaction);
                 try (Connection connection = dataSource.getConnection()) {
                     cleanUtils.deleteFileAndDataCommitInfo(value.snapshot, value.tableId, value.partitionDesc, connection, belongOldCompaction);
                     cleanUtils.cleanPartitionInfo(value.tableId, value.partitionDesc, value.version, connection);
@@ -230,7 +229,7 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
                         Instant.ofEpochMilli(triggerTime),
                         ZoneId.systemDefault());
                 String formatted = dateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-                log.info("表id: " + tableId +"=====version: " + value.version + "注册定时器，将在" + formatted + " 执行");
+                log.info(currentKey + value.version + "注册定时器，将在" + formatted + " 执行");
                 ctx.timerService().registerProcessingTimeTimer(triggerTime);
             }
         } else {
@@ -240,7 +239,7 @@ public class CompactionBroadcastProcessFunction extends KeyedBroadcastProcessFun
                     Instant.ofEpochMilli(triggerTime),
                     ZoneId.systemDefault());
             String formatted = dateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-            log.info("表id: " + tableId +"=====version: " + value.version + "注册定时器，将在" + formatted + " 执行");
+            log.info(currentKey + "注册定时器，将在" + formatted + " 执行");
             ctx.timerService().registerProcessingTimeTimer(triggerTime);
         }
     }

@@ -77,8 +77,8 @@ public class Clean {
             startupOptions = StartupOptions.earliest();
         }
 
-        int ontimerInterval = 60000;
-        //int ontimerInterval = parameter.getInt(SourceOptions.ONTIMER_INTERVAL.key(), 10) * 60000 * 60;
+        //int ontimerInterval = 60000;
+        int ontimerInterval = parameter.getInt(SourceOptions.ONTIMER_INTERVAL.key(), 10) * 60000 * 60;
         //expiredTime = 60000;
         expiredTime = parameter.getInt(SourceOptions.DATA_EXPIRED_TIME.key(),120000) ;
         if (expiredTime < 10){
@@ -179,8 +179,10 @@ public class Clean {
                 .map(new DiscardPathMapFunction())
                 .filter(value -> !value.f0.equals("delete"))
                 .keyBy(value -> value.f0)
-                .process(new DiscardFilePathProcessFunction(pgUrl,userName,passWord,expiredTime))
-                .name("处理新版过期数据");
+                .process(new DiscardFilePathProcessFunction(expiredTime))
+                .name("处理新版过期数据")
+                .process(new DiscardFileDeleteFunction(pgUrl, userName, passWord))
+                .name("批量异步删除数据");
         //discardFileInfoStream.map(new DiscardPathMapFunction()).filter(value -> !value.f0.equals("delete")).print();
         env.execute("清理服务");
 

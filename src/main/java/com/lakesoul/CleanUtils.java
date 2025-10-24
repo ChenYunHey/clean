@@ -53,6 +53,7 @@ public class CleanUtils {
     }
 
     public void deleteFile(String filePath) throws SQLException {
+        System.out.println("======");
         Configuration hdfsConfig = new Configuration();
         if (filePath.startsWith(HDFS_URI_PREFIX)) {
             deleteHdfsFile(filePath, hdfsConfig);

@@ -28,24 +28,18 @@ public class DiscardFilePathProcessFunction
 
     private static final Logger log = LoggerFactory.getLogger(DiscardFilePathProcessFunction.class);
 
-    private final String pgUrl;
-    private final String pgUserName;
-    private final String pgPasswd;
     private final long expiredTimestamp;
 
     private transient ValueState<Long> lastOntimerTimestampState;
     private transient ValueState<Long> recordTimestampState;
-    private transient DataSource dataSource;
+    //private transient DataSource dataSource;
 
-    public DiscardFilePathProcessFunction(String pgUrl, String pgUserName, String pgPasswd, long expiredTimestamp) {
-        this.pgUrl = pgUrl;
-        this.pgUserName = pgUserName;
-        this.pgPasswd = pgPasswd;
+    public DiscardFilePathProcessFunction(long expiredTimestamp) {
         this.expiredTimestamp = expiredTimestamp;
     }
 
     @Override
-    public void open(Configuration parameters) throws Exception {
+    public void open(Configuration parameters) {
         // 初始化状态
         ValueStateDescriptor<Long> recordTimestampStateDesc =
                 new ValueStateDescriptor<>("recordTimestampState", Long.class);
@@ -55,23 +49,6 @@ public class DiscardFilePathProcessFunction
                 new ValueStateDescriptor<>("lastUpdateTimestampState", Long.class);
         lastOntimerTimestampState = getRuntimeContext().getState(lastOntimerTimestampStateDesc);
 
-        HikariConfig config = new HikariConfig();
-        config.setJdbcUrl(pgUrl);
-        config.setUsername(pgUserName);
-        config.setPassword(pgPasswd);
-        config.setDriverClassName("org.postgresql.Driver");
-
-        config.setMaximumPoolSize(5);            // 每个 TM 的最大连接数
-        config.setMinimumIdle(1);
-        config.setConnectionTimeout(10000);      // 10 秒超时
-        config.setIdleTimeout(60000);            // 1 分钟空闲回收
-        config.setMaxLifetime(300000);           // 5 分钟重建连接
-        config.setAutoCommit(true);
-        config.addDataSourceProperty("cachePrepStmts", "true");
-        config.addDataSourceProperty("prepStmtCacheSize", "250");
-        config.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
-
-        dataSource = new HikariDataSource(config);
     }
 
     @Override
@@ -86,8 +63,9 @@ public class DiscardFilePathProcessFunction
         if (fileTimestamp != -5L){
             recordTimestampState.update(fileTimestamp);
             if (currentProcessingTime - fileTimestamp > expiredTimestamp) {
-                log.info("文件 [{}] 已过期，立即清理。", filePath);
-                cleanFileAndRecord(filePath);
+                log.info("文件 [{}] 已过期，加入清理队列准备清理。", filePath);
+                //cleanFileAndRecord(filePath);
+                out.collect(value.f0);
                 recordTimestampState.clear();
             } else {
                 long triggerTime = fileTimestamp + expiredTimestamp;
@@ -113,36 +91,10 @@ public class DiscardFilePathProcessFunction
         String filePath = ctx.getCurrentKey();
         Long fileTimestamp = recordTimestampState.value();
         if (fileTimestamp == null) return;
-        log.info("定时器触发，文件 [{}] 已过期，开始清理。", filePath);
-        cleanFileAndRecord(filePath);
+        log.info("文件 [{}] 已过期，加入清理队列开始清理。", filePath);
+        //cleanFileAndRecord(filePath);
+        out.collect(filePath);
         recordTimestampState.clear();
         lastOntimerTimestampState.clear();
-    }
-
-    private void cleanFileAndRecord(String filePath) {
-        CleanUtils cleanUtils = new CleanUtils();
-        try {
-            cleanUtils.deleteFile(filePath);
-            try (Connection connection = dataSource.getConnection();
-                 PreparedStatement ps = connection.prepareStatement("DELETE FROM discard_compressed_file_info WHERE file_path = ?")) {
-                ps.setString(1, filePath);
-                int rowsDeleted = ps.executeUpdate();
-                log.info("清理文件 [{}] 成功，删除数据库记录 {} 行。", filePath, rowsDeleted);
-            }
-
-        } catch (SQLException e) {
-            log.error("删除数据库记录失败，文件 [{}]", filePath, e);
-        } catch (Exception e) {
-            log.error("删除文件失败，文件 [{}]", filePath, e);
-        }
-    }
-
-    @Override
-    public void close() throws Exception {
-        super.close();
-        if (dataSource instanceof HikariDataSource) {
-            ((HikariDataSource) dataSource).close();
-            log.info("HikariCP 连接池已关闭。");
-        }
     }
 }
